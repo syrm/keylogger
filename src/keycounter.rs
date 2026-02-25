@@ -1,4 +1,4 @@
-use evdev::Device;
+use evdev::{Device, EventStream};
 use futures_util::stream::StreamExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -41,17 +41,17 @@ impl KeyCounter {
     pub async fn monitor(&self, sender: Sender<KeyEvent>) -> anyhow::Result<()> {
         let (tx, rx) = tokio::sync::mpsc::channel::<DeviceEvent>(100);
 
-        let monitor_keyboard = self.monitor_keyboard(tx);
-        let monitor_keys = self.monitor_keys(rx, sender);
-        tokio::try_join!(monitor_keyboard, monitor_keys)?;
+        let monitor_keyboards = KeyCounter::monitor_keyboards(tx);
+        let monitor_keyboard = KeyCounter::monitor_keyboard(rx, sender);
+        tokio::try_join!(monitor_keyboards, monitor_keyboard)?;
 
         Ok(())
     }
 
-    async fn monitor_keyboard(&self, tx: Sender<DeviceEvent>) -> anyhow::Result<()> {
+    async fn monitor_keyboards(tx: Sender<DeviceEvent>) -> anyhow::Result<()> {
         loop {
             let devices = evdev::enumerate().collect::<Vec<_>>();
-            self.process_devices(tx.clone(), &devices).await?;
+            KeyCounter::process_devices(tx.clone(), &devices).await?;
 
             // process devices
 
@@ -106,8 +106,31 @@ impl KeyCounter {
         }
     }
 
-    async fn monitor_keys(
-        &self,
+    async fn task_monitor_keyboard(path: String, tx: Sender<KeyEvent>) {
+        'reconnect: loop {
+            let device = match Device::open(&path) {
+                Err(e) => {
+                    tracing::error!(error = %e, "can't open device");
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    break;
+                }
+                Ok(dev) => dev,
+            };
+
+            let mut stream = match device.into_event_stream() {
+                Err(e) => {
+                    tracing::error!(error = %e, "can't convert device to event stream");
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue 'reconnect;
+                }
+                Ok(stream) => stream,
+            };
+
+            KeyCounter::monitor_keyboard_events(stream, tx.clone()).await;
+        }
+    }
+
+    async fn monitor_keyboard(
         mut rx: Receiver<DeviceEvent>,
         sender: Sender<KeyEvent>,
     ) -> anyhow::Result<()> {
@@ -124,87 +147,71 @@ impl KeyCounter {
                 continue;
             }
 
-            let sender = sender.clone();
-
             if devices_task.contains_key(&path) {
                 continue;
             }
 
-            devices_task.insert(path.clone(), tokio::spawn(async move {
-                'reconnect: loop {
-                    let device = match Device::open(&path) {
-                        Err(e) => {
-                            tracing::error!(error = %e, "can't open device");
-                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                            break;
-                        }
-                        Ok(dev) => dev,
-                    };
+            let sender = sender.clone();
 
-                    let mut stream = match device.into_event_stream() {
-                        Err(e) => {
-                            tracing::error!(error = %e, "can't convert device to event stream");
-                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                            continue 'reconnect;
-                        }
-                        Ok(stream) => stream,
-                    };
-
-                    let mut key_pressed: HashMap<u16, u128> = HashMap::new();
-
-                    loop {
-                        match stream.next_event().await {
-                            Ok(event) => {
-                                if event.event_type() != evdev::EventType::KEY {
-                                    continue;
-                                }
-
-                                if !EV_KEY_RANGE.contains(&event.code()) {
-                                    continue;
-                                };
-
-                                let Ok(ts) = event.timestamp().duration_since(UNIX_EPOCH) else {
-                                    continue;
-                                };
-
-                                if event.value() == EV_KEYDOWN {
-                                    key_pressed.insert(event.code(), ts.as_micros());
-                                    continue;
-                                }
-
-                                if event.value() == EV_KEYUP {
-                                    let Some(ts_us_start) = key_pressed.remove(&event.code())
-                                    else {
-                                        continue;
-                                    };
-
-                                    let duration_us = ts.as_micros() - ts_us_start;
-                                    tracing::info!(ts_us_start = field::Empty, "key pressed");
-                                    sender
-                                        .send(KeyEvent {
-                                            ts_ms: (ts_us_start / 1000) as u64,
-                                            duration_us: duration_us,
-                                        })
-                                        .await
-                                        .ok();
-                                }
-                            }
-                            Err(e) => {
-                                tracing::error!(error = %e, "event stream error, reconnecting...");
-                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                                continue 'reconnect;
-                            }
-                        }
-                    }
-                }
-            }));
+            devices_task.insert(
+                path.clone(),
+                tokio::spawn(async move {
+                    KeyCounter::task_monitor_keyboard(path, sender).await;
+                }),
+            );
         }
 
         Ok(())
     }
 
+    async fn monitor_keyboard_events(mut stream: EventStream, tx: Sender<KeyEvent>) {
+        let mut key_pressed: HashMap<u16, u128> = HashMap::new();
+
+        loop {
+            match stream.next_event().await {
+                Ok(event) => {
+                    if event.event_type() != evdev::EventType::KEY {
+                        continue;
+                    }
+
+                    if !EV_KEY_RANGE.contains(&event.code()) {
+                        continue;
+                    };
+
+                    let Ok(ts) = event.timestamp().duration_since(UNIX_EPOCH) else {
+                        continue;
+                    };
+
+                    if event.value() == EV_KEYDOWN {
+                        key_pressed.insert(event.code(), ts.as_micros());
+                        continue;
+                    }
+
+                    if event.value() == EV_KEYUP {
+                        let Some(ts_us_start) = key_pressed.remove(&event.code()) else {
+                            continue;
+                        };
+
+                        let duration_us = ts.as_micros() - ts_us_start;
+                        tracing::info!(ts_us_start = field::Empty, "key pressed");
+                        tx.send(KeyEvent {
+                            ts_ms: (ts_us_start / 1000) as u64,
+                            duration_us: duration_us,
+                        })
+                        .await
+                        .ok();
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "event stream error, reconnecting...");
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    break;
+                }
+            }
+        }
+    }
+
     async fn process_devices(
-        &self,
         tx: Sender<DeviceEvent>,
         devices: &[(PathBuf, Device)],
     ) -> anyhow::Result<()> {
