@@ -1,21 +1,69 @@
 use slint::{PlatformError, Weak, Window};
 use sqlx::{pool, SqlitePool};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::mpsc::Receiver;
 use tokio::time;
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 slint::include_modules!();
 
-pub(crate) fn run_ui(pool: sqlx::SqlitePool) -> Result<(), PlatformError> {
+pub(crate) fn run_ui(
+    mut rx: Receiver<bool>,
+    pool: sqlx::SqlitePool,
+    cancellation_token: CancellationToken,
+) -> Result<(), PlatformError> {
     let main_window = MainWindow::new()?;
-    let window_weak = main_window.as_weak();
+    let window_weak_for_refresh = main_window.as_weak();
+    let window_weak_for_hide = main_window.as_weak();
 
+    let token_refresh = cancellation_token.clone();
     tokio::spawn(async move {
-        refresh_ui(pool, window_weak).await;
+        tokio::select! {
+            _ = token_refresh.cancelled() => {
+                return;
+            },
+            _ = refresh_ui(pool, window_weak_for_refresh.clone()) => {}
+        }
+    });
+
+    let token_show = cancellation_token.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = token_show.cancelled() => {
+                    return;
+                },
+                result = rx.recv() => {
+                    if let Some(show) = result {
+                        println!("receive show: {}", show);
+
+                        let window_weak_for_hide = window_weak_for_hide.clone();
+                        let window_clone = window_weak_for_hide.clone();
+                        let res = slint::invoke_from_event_loop(move || {
+                            println!("receive show 2: {}", show);
+
+                            if let Some(window) = window_clone.upgrade() {
+                                if show {
+                                    window.show().unwrap();
+                                } else {
+                                    window.hide().unwrap();
+                                }
+                            }
+                        });
+
+                        if let Err(e) = res {
+                            tracing::error!(error = %e, "can't show window");
+                        }
+                    }
+                }
+            }
+        }
     });
 
     tracing::info!("starting ui");
-    main_window.run()
+    slint::run_event_loop_until_quit();
+    main_window.hide()
 }
 
 async fn refresh_ui(pool: sqlx::SqlitePool, window_weak: Weak<MainWindow>) {
@@ -35,6 +83,10 @@ async fn refresh_ui(pool: sqlx::SqlitePool, window_weak: Weak<MainWindow>) {
         tracing::info!("key count: {} / {} / {}", count_1m, count_5m, count_15m);
 
         window_weak.upgrade_in_event_loop(move |window| {
+            if !window.window().is_visible() {
+                return;
+            }
+
             window.set_key_count_1m(count_1m);
             window.set_key_count_5m(count_5m);
             window.set_key_count_15m(count_15m);
