@@ -1,4 +1,5 @@
 use crate::keycounter::KeyEvent;
+use crate::ui::run_ui;
 use evdev::Device;
 use sqlx::SqlitePool;
 use std::fs;
@@ -7,6 +8,7 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 
 mod collector;
 mod keycounter;
+mod ui;
 
 #[tokio::main]
 async fn main() {
@@ -44,7 +46,7 @@ async fn main() {
     let (tx, rx) = mpsc::channel::<KeyEvent>(100);
     let mut kc = keycounter::KeyCounter::new();
 
-    let collector = collector::Collector::new(pool);
+    let collector = collector::Collector::new(pool.clone());
     let h_collector = tokio::spawn(async move {
         if let Err(e) = collector.collect(rx).await {
             tracing::error!(error = %e, "can't collect stats");
@@ -52,7 +54,7 @@ async fn main() {
         }
     });
 
-    let res_monitor = std::thread::spawn(move || {
+    let task_monitor = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -64,8 +66,11 @@ async fn main() {
                 std::process::exit(1);
             }
         });
-    })
-    .join();
+    });
+
+    run_ui(pool);
+
+    let res_monitor = task_monitor.join();
 
     if let Err(e) = res_monitor {
         tracing::error!(error = ?e, "can't monitor");

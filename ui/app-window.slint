@@ -1,0 +1,116 @@
+component TitleText inherits Text {
+    color: #00d4aa;
+    font-size: 1.6rem;
+    font-weight: 1000;
+    horizontal-alignment: TextHorizontalAlignment.center;
+}
+
+component SubText inherits Text {
+    color: #ffffff;
+    stroke: #262626;
+    stroke-style: TextStrokeStyle.outside;
+    stroke-width: 0.10rem;
+    font-weight: 700;
+    horizontal-alignment: TextHorizontalAlignment.center;
+}
+
+export component MainWindow inherits Window {
+    default-font-size: min(root.width, root.height) * 0.1;
+    title: "keylogger";
+    always-on-top: true;
+    background: #262626;
+    no-frame: true;
+    x: 0px;
+
+    out property <bool> is-compact: compact;
+    property <bool> compact: false;
+
+    width: compact ? 150px : 400px;
+    height: compact ? 250px : 500px;
+
+    forward-focus: key-handler;
+
+    key-handler := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if (event.text == "t") {
+                compact = !compact;
+            }
+            accept
+        }
+    }
+
+    in property <int> key-count-1m;
+    in property <int> key-count-5m;
+    in property <int> key-count-15m;
+    in property <int> wpm-1m;
+    in property <int> wpm-5m;
+    in property <int> wpm-15m;
+    in property <string> chart-path-1m;
+    in property <string> chart-path-5m;
+    in property <string> chart-path-15m;
+
+    out property <float> chart-w-1m: rect-1m.width / 1px;
+    out property <float> chart-h-1m: rect-1m.height / 1px;
+    out property <float> chart-w-5m: rect-5m.width / 1px;
+    out property <float> chart-h-5m: rect-5m.height / 1px;
+    out property <float> chart-w-15m: rect-15m.width / 1px;
+    out property <float> chart-h-15m: rect-15m.height / 1px;
+
+    VerticalLayout {
+        alignment: LayoutAlignment.stretch;
+        horizontal-stretch: 1;
+
+        TitleText {
+            text: "1mn";
+        }
+
+        rect-1m := Rectangle {
+            Path {
+                stroke: #00d4aa;
+                fill: #00d4aaee;
+                stroke-width: 0.5px;
+                commands: root.chart-path-1m;
+            }
+
+            SubText {
+                text: root.key-count-1m + " keys / " + root.wpm-1m + " wpm";
+            }
+        }
+
+        TitleText {
+            text: "5mn";
+        }
+
+        rect-5m := Rectangle {
+            Path {
+                stroke: #00d4aa;
+                fill: #00d4aaee;
+                stroke-width: 0.5px;
+                commands: root.chart-path-5m;
+            }
+            SubText {
+                text: root.key-count-5m + " keys / " + root.wpm-5m + " wpm";
+            }
+        }
+
+        TitleText {
+            text: "15mn";
+        }
+
+        rect-15m := Rectangle {
+            Path {
+                stroke: #00d4aa;
+                fill: #00d4aaee;
+                stroke-width: 0.5px;
+                commands: root.chart-path-15m;
+            }
+
+            SubText {
+                text: root.key-count-15m + " keys / " + root.wpm-15m + " wpm";
+            }
+        }
+    }
+
+}

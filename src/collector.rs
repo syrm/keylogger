@@ -39,8 +39,6 @@ impl Collector {
     }
 
     async fn save(&self, keys: Vec<KeyEvent>) {
-        //tracing::info!(count = ?keys.len(), "saving keys");
-
         for key_event in keys {
             let result = sqlx::query("INSERT INTO keycount (ts_ms, duration_us) VALUES (?, ?)")
                 .bind(key_event.ts_ms as i64)
