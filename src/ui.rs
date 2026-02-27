@@ -141,20 +141,22 @@ async fn get_wpm(pool: &sqlx::SqlitePool, duration: u16) -> i32 {
         WITH gaps AS (
             SELECT
             ts_ms,
-            CASE WHEN ts_ms - LAG(ts_ms) OVER (ORDER BY ts_ms) > 5000 THEN 1 ELSE 0 END as new_session
+            CASE WHEN ts_ms - LAG(ts_ms) OVER (ORDER BY ts_ms) > 5000 THEN 1 ELSE 0 END as new_session,
+            key_type
             FROM keycount
             WHERE ts_ms BETWEEN (strftime('%s', 'now') - ?)*1000 AND (strftime('%s', 'now') - 0)*1000
         ),
         sessions AS (
             SELECT
             ts_ms,
-            SUM(new_session) OVER (ORDER BY ts_ms) as session_id
+            SUM(new_session) OVER (ORDER BY ts_ms) as session_id,
+            key_type
             FROM gaps
         ),
         session_stats AS (
             SELECT
             session_id,
-            COUNT(*) as total_keys,
+            MAX(0, SUM(IIF(key_type = 1, 1, 0))-SUM(IIF(key_type = 2, 1, 0))) as total_keys,
             (MAX(ts_ms) - MIN(ts_ms)) / 1000.0 as duration_secs
             FROM sessions
             GROUP BY session_id

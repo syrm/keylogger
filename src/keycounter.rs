@@ -15,10 +15,18 @@ const EV_KEYDOWN: i32 = 0x01;
 #[derive(Debug)]
 pub(crate) struct KeyCounter {}
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
+pub(crate) enum KeyEventType {
+    Printable = 1,
+    Delete = 2,
+    Other = 3,
+}
+
+#[derive(Debug, Copy, Clone)]
 pub(crate) struct KeyEvent {
     pub ts_ms: u64,
     pub duration_us: u128,
+    pub key_type: KeyEventType,
 }
 
 #[derive(Debug, PartialEq)]
@@ -193,10 +201,22 @@ impl KeyCounter {
                         };
 
                         let duration_us = ts.as_micros() - ts_us_start;
-                        tracing::info!(ts_us_start = field::Empty, "key pressed");
+                        tracing::info!(code = event.code(), "key pressed");
                         tx.send(KeyEvent {
                             ts_ms: (ts_us_start / 1000) as u64,
                             duration_us: duration_us,
+                            key_type: match event.code() {
+                                2..=13    // 1-9, 0, -, =
+                                | 16..=27 // q-p, [, ]
+                                | 30..=41 // a-l, ;, ', `
+                                | 43..=53 // \, z-m, ,, ., /
+                                | 57      // espace
+                                | 71..=83 // pavé numérique
+                                => KeyEventType::Printable,
+                                14 => KeyEventType::Delete,
+                                111 => KeyEventType::Delete,
+                                _ => KeyEventType::Other,
+                            },
                         })
                         .await
                         .ok();

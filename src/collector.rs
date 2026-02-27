@@ -40,11 +40,13 @@ impl Collector {
 
     async fn save(&self, keys: Vec<KeyEvent>) {
         for key_event in keys {
-            let result = sqlx::query("INSERT INTO keycount (ts_ms, duration_us) VALUES (?, ?)")
-                .bind(key_event.ts_ms as i64)
-                .bind(key_event.duration_us as i64)
-                .execute(&self.pool)
-                .await;
+            let result =
+                sqlx::query("INSERT INTO keycount (ts_ms, duration_us, key_type) VALUES (?, ?, ?)")
+                    .bind(key_event.ts_ms as i64)
+                    .bind(key_event.duration_us as i64)
+                    .bind(key_event.key_type as i64)
+                    .execute(&self.pool)
+                    .await;
 
             if let Err(e) = result {
                 tracing::warn!(error = ?e, key_event = ?key_event, "failed to insert key");
