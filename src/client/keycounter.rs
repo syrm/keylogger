@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::watch;
 
 const EV_KEY_RANGE: std::ops::RangeInclusive<u16> = 1..=248;
 const EV_KEYUP: i32 = 0x00;
@@ -29,17 +30,15 @@ const REALTIME_LEAK_THRESHOLD_MS: u128 = 1_000_000_000_000; // ~ Sept. 2001
 
 #[derive(Debug)]
 pub(crate) struct KeyCounter {
-    /// Shared, periodically refreshed offset (ms) between CLOCK_REALTIME
-    /// and CLOCK_BOOTTIME, used to convert raw device timestamps (BOOTTIME)
-    /// back into epoch ms for display, without ever touching the duration
-    /// computation (which stays purely kernel-precision BOOTTIME deltas).
     clock_offset_ms: Arc<AtomicI64>,
+    focus_rx: watch::Receiver<String>,
 }
 
 impl KeyCounter {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(focus_rx: watch::Receiver<String>) -> Self {
         Self {
             clock_offset_ms: Arc::new(AtomicI64::new(0)),
+            focus_rx,
         }
     }
 
@@ -53,8 +52,12 @@ impl KeyCounter {
         let (tx, rx) = tokio::sync::mpsc::channel::<Evdev>(100);
 
         let enumerate_devices = KeyCounter::enumerate_devices(tx);
-        let dispatch_devices =
-            KeyCounter::dispatch_devices(rx, sender, self.clock_offset_ms.clone());
+        let dispatch_devices = KeyCounter::dispatch_devices(
+            rx,
+            sender,
+            self.clock_offset_ms.clone(),
+            self.focus_rx.clone(),
+        );
         let refresh_offset = KeyCounter::refresh_clock_offset(self.clock_offset_ms.clone());
 
         tokio::try_join!(enumerate_devices, dispatch_devices, refresh_offset)?;
@@ -132,12 +135,14 @@ impl KeyCounter {
         mut rx: Receiver<Evdev>,
         sender: Sender<KeyEvent>,
         offset: Arc<AtomicI64>,
+        focus_rx: watch::Receiver<String>,
     ) -> anyhow::Result<()> {
         while let Some(evdev) = rx.recv().await {
             let sender = sender.clone();
             let offset = offset.clone();
+            let focus_rx = focus_rx.clone();
             tokio::spawn(async move {
-                KeyCounter::monitor_device(evdev, sender, offset).await;
+                KeyCounter::monitor_device(evdev, sender, offset, focus_rx).await;
             });
         }
 
@@ -161,7 +166,12 @@ impl KeyCounter {
         }
     }
 
-    async fn monitor_device(evdev: Evdev, tx: Sender<KeyEvent>, offset: Arc<AtomicI64>) {
+    async fn monitor_device(
+        evdev: Evdev,
+        tx: Sender<KeyEvent>,
+        offset: Arc<AtomicI64>,
+        focus_rx: watch::Receiver<String>,
+    ) {
         // CLOCK_BOOTTIME: monotonic like CLOCK_MONOTONIC (so durations stay
         // immune to NTP adjustments and userspace scheduling jitter), but
         // unlike CLOCK_MONOTONIC it keeps advancing during suspend, so there
@@ -245,6 +255,7 @@ impl KeyCounter {
                     id: 0,
                     ts_ms: ts_ms_epoch,
                     duration_ms: duration_ms as i32,
+                    app_name: focus_rx.borrow().clone(),
                     key_type: match event.raw_code() {
                         2..=13 | 16..=27 | 30..=41 | 43..=53 | 57 | 71..=83 => KeyType::Typing,
                         14 => KeyType::Deletion,

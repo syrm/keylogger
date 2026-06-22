@@ -2,9 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const ACTION_EVENTS: &str = "events";
 
-#[derive(
-    Debug, Copy, Clone, Serialize, Deserialize, sqlx::Type, bincode::Encode, bincode::Decode,
-)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, sqlx::Type)]
 #[repr(i32)]
 pub(crate) enum KeyType {
     Typing = 1,
@@ -12,14 +10,13 @@ pub(crate) enum KeyType {
     Other = 3,
 }
 
-#[derive(
-    Debug, Copy, Clone, Serialize, Deserialize, sqlx::FromRow, bincode::Encode, bincode::Decode,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub(crate) struct KeyEvent {
     pub id: i64,
     pub ts_ms: i64,
     pub duration_ms: i32,
     pub key_type: KeyType,
+    pub app_name: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -30,7 +27,7 @@ pub(crate) struct SignedKeyEventsPayload {
     pub issued_at: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, bincode::Encode, bincode::Decode)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct KeyEventsPayload {
     pub events: Vec<KeyEvent>,
     pub origin_id: i32,
@@ -47,4 +44,5 @@ pub(crate) struct KeyEventsPayloadWire {
     pub ts_deltas: Vec<i64>,
     pub durations_ms: Vec<i32>,
     pub key_types: Vec<KeyType>,
+    pub app_names: Vec<String>,
 }

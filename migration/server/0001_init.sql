@@ -22,15 +22,16 @@ create table keyevent
     id              bigint generated always as identity
         constraint keyevent_pk
             primary key,
-    timestamp_ms    bigint  not null,
-    duration_ms     bigint  not null,
+    pressed_at      timestamp with time zone not null,
+    duration_ms     bigint                   not null,
     key_type        keytype,
-    origin_id       integer not null
+    app_name        text                     not null,
+    origin_id       integer                  not null
         constraint keyevent_origin_id_fk
             references origin
             on update cascade on delete cascade
             deferrable,
-    origin_event_id bigint  not null,
+    origin_event_id bigint                   not null,
     constraint keyevent_origin_event_uq
         unique (origin_id, origin_event_id)
 );

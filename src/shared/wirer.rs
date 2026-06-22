@@ -19,6 +19,7 @@ fn to_wire(payload: &KeyEventsPayload) -> KeyEventsPayloadWire {
     let mut ts_deltas = Vec::with_capacity(n);
     let mut durations_ms = Vec::with_capacity(n);
     let mut key_types = Vec::with_capacity(n);
+    let mut app_names = Vec::with_capacity(n);
 
     let (mut prev_id, mut prev_ts) = (0i64, 0i64);
 
@@ -27,6 +28,7 @@ fn to_wire(payload: &KeyEventsPayload) -> KeyEventsPayloadWire {
         ts_deltas.push(e.ts_ms - prev_ts);
         durations_ms.push(e.duration_ms);
         key_types.push(e.key_type);
+        app_names.push(e.app_name.clone());
 
         prev_id = e.id;
         prev_ts = e.ts_ms;
@@ -40,12 +42,17 @@ fn to_wire(payload: &KeyEventsPayload) -> KeyEventsPayloadWire {
         ts_deltas,
         durations_ms,
         key_types,
+        app_names,
     }
 }
 
 fn from_wire(wire: KeyEventsPayloadWire) -> anyhow::Result<KeyEventsPayload> {
     let n = wire.id_deltas.len();
-    if wire.ts_deltas.len() != n || wire.durations_ms.len() != n || wire.key_types.len() != n {
+    if wire.ts_deltas.len() != n
+        || wire.durations_ms.len() != n
+        || wire.key_types.len() != n
+        || wire.app_names.len() != n
+    {
         anyhow::bail!("malformed payload: vector length mismatch");
     }
 
@@ -60,6 +67,7 @@ fn from_wire(wire: KeyEventsPayloadWire) -> anyhow::Result<KeyEventsPayload> {
             ts_ms,
             duration_ms: wire.durations_ms[i],
             key_type: wire.key_types[i],
+            app_name: wire.app_names[i].clone(),
         });
     }
 

@@ -9,7 +9,7 @@ use ksni::TrayMethods;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::{migrate, SqlitePool};
 use std::str::FromStr;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
@@ -53,8 +53,114 @@ impl Client {
 
         let token = CancellationToken::new();
 
+        let (focus_tx, focus_rx) = watch::channel(String::from("unknown"));
+
+        let token_niri = token.clone();
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader, Write};
+            use std::net::Shutdown;
+            use std::os::unix::net::UnixStream;
+
+            // Outer loop: reconnects indefinitely until the token is cancelled.
+            loop {
+                if token_niri.is_cancelled() {
+                    break;
+                }
+
+                let socket_path = match std::env::var_os(niri_ipc::socket::SOCKET_PATH_ENV) {
+                    Some(p) => p,
+                    None => {
+                        tracing::warn!("NIRI_SOCKET not set, retrying in 5s");
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        continue;
+                    }
+                };
+
+                let mut stream = match UnixStream::connect(&socket_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "niri socket connection failed, retrying in 5s");
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        continue;
+                    }
+                };
+
+                let req = serde_json::to_string(&niri_ipc::Request::EventStream).unwrap();
+                if let Err(e) = stream.write_all(req.as_bytes()).and_then(|_| stream.write_all(b"\n")) {
+                    tracing::warn!(error = %e, "failed to send niri request, retrying in 5s");
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    continue;
+                }
+                let _ = stream.shutdown(Shutdown::Write);
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+
+                let mut reader = BufReader::new(stream);
+                let mut buf = String::new();
+
+                // Consume Reply — si ça échoue, on reconnecte
+                if reader.read_line(&mut buf).is_err() {
+                    tracing::warn!("failed to read niri reply, reconnecting");
+                    continue;
+                }
+                buf.clear();
+
+                // Inner loop: reads events on the current connection.
+                loop {
+                    if token_niri.is_cancelled() {
+                        return;
+                    }
+                    buf.clear();
+                    match reader.read_line(&mut buf) {
+                        Ok(0) => {
+                            tracing::warn!("niri connection closed (EOF), reconnecting");
+                            break;
+                        }
+                        Ok(_) => {}
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            continue
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "niri event read error, reconnecting");
+                            break;
+                        }
+                    }
+                    match serde_json::from_str::<niri_ipc::Event>(&buf) {
+                        // Initial state: find the focused window.
+                        Ok(niri_ipc::Event::WindowsChanged { windows }) => {
+                            if let Some(app_name) = windows
+                                .into_iter()
+                                .find(|w| w.is_focused)
+                                .and_then(|w| w.app_id)
+                            {
+                                let _ = focus_tx.send(app_name);
+                            }
+                        }
+                        // Focus change: niri sets is_focused on the new window.
+                        Ok(niri_ipc::Event::WindowOpenedOrChanged { window })
+                            if window.is_focused =>
+                        {
+                            let app_name = window.app_id.unwrap_or_else(|| "unknown".into());
+                            tracing::info!(app_name = %app_name, "window focus changed");
+                            let _ = focus_tx.send(app_name);
+                        }
+                        Ok(niri_ipc::Event::WindowFocusChanged { id: None }) => {
+                            tracing::info!("window focus changed: desktop");
+                            let _ = focus_tx.send("desktop".into());
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!("unknown or malformed niri event, skipping: {e}");
+                        }
+                    }
+                }
+            }
+        });
+
         let (tx_key, rx_key) = mpsc::channel::<KeyEvent>(100);
-        let kc = keycounter::KeyCounter::new();
+        let kc = keycounter::KeyCounter::new(focus_rx);
 
         let collector = collector::Collector::new(pool.clone());
         let token_collector = token.clone();

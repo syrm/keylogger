@@ -52,7 +52,7 @@ impl Sync {
         let pool = self.pool.clone();
         let mut keycodes = sqlx::query_as::<_, KeyEvent>(
             r#"
-            SELECT id, ts_ms, duration_ms, key_type
+            SELECT id, ts_ms, duration_ms, key_type, app_name
             FROM keyevent
             WHERE id > (SELECT value FROM metadata WHERE key = 'last_event_id_synced')
             ORDER BY id
