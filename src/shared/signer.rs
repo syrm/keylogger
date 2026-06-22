@@ -141,7 +141,7 @@ impl Signer {
     ) -> anyhow::Result<()> {
         let signature_bytes = URL_SAFE_NO_PAD
             .decode(signature_b64)
-            .expect("invalid base64 signature");
+            .map_err(|e| anyhow::anyhow!("invalid base64 signature: {e}"))?;
 
         let signature_bytes: [u8; 64] = signature_bytes
             .try_into()
@@ -151,7 +151,7 @@ impl Signer {
 
         verifying_key
             .verify_strict(message, &signature)
-            .expect("signature verification failed");
+            .map_err(|e| anyhow::anyhow!("signature verification failed: {e}"))?;
 
         Ok(())
     }

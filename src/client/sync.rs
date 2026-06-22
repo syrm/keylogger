@@ -86,7 +86,7 @@ impl Sync {
         }
 
         if events.len() > 0 {
-            if let Ok(last_event_id) = self.send_event(events.clone()).await {
+            if let Ok(last_event_id) = self.send_event(events).await {
                 sqlx::query(
                     r#"
                         UPDATE metadata SET value = $1

@@ -10,7 +10,7 @@ pub(crate) fn encode(payload: &KeyEventsPayload) -> anyhow::Result<Vec<u8>> {
 pub(crate) fn decode(compressed: &[u8]) -> anyhow::Result<KeyEventsPayload> {
     let bytes = zstd::stream::decode_all(compressed)?;
     let wire: KeyEventsPayloadWire = postcard::from_bytes(&bytes)?;
-    Ok(from_wire(wire))
+    from_wire(wire)
 }
 
 fn to_wire(payload: &KeyEventsPayload) -> KeyEventsPayloadWire {
@@ -43,8 +43,12 @@ fn to_wire(payload: &KeyEventsPayload) -> KeyEventsPayloadWire {
     }
 }
 
-fn from_wire(wire: KeyEventsPayloadWire) -> KeyEventsPayload {
+fn from_wire(wire: KeyEventsPayloadWire) -> anyhow::Result<KeyEventsPayload> {
     let n = wire.id_deltas.len();
+    if wire.ts_deltas.len() != n || wire.durations_ms.len() != n || wire.key_types.len() != n {
+        anyhow::bail!("malformed payload: vector length mismatch");
+    }
+
     let mut events = Vec::with_capacity(n);
     let (mut id, mut ts_ms) = (0i64, 0i64);
 
@@ -59,10 +63,10 @@ fn from_wire(wire: KeyEventsPayloadWire) -> KeyEventsPayload {
         });
     }
 
-    KeyEventsPayload {
+    Ok(KeyEventsPayload {
         origin_id: wire.origin_id,
         issued_at: wire.issued_at,
         signature: wire.signature,
         events,
-    }
+    })
 }

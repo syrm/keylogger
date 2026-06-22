@@ -24,8 +24,6 @@ pub enum StatsError {
     InvalidPayload(#[from] anyhow::Error),
     #[error(transparent)]
     Db(#[from] sqlx::Error),
-    #[error("none")]
-    None,
 }
 
 impl axum::response::IntoResponse for StatsError {
@@ -46,7 +44,6 @@ impl axum::response::IntoResponse for StatsError {
                 error!(error = %e, "db error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            Self::None => StatusCode::OK,
         };
         (status, self.to_string()).into_response()
     }
@@ -78,24 +75,25 @@ pub async fn events(
     })?
     .ok_or(StatsError::InvalidOriginID)?;
 
-    let public_key_bytes = hex::decode(public_key).expect("invalid hex public key");
-    let verifying_key = VerifyingKey::from_bytes(
-        public_key_bytes[0..32]
-            .try_into()
-            .expect("invalid public key"),
-    )
-    .expect("invalid public key");
+    let public_key_bytes = hex::decode(&public_key)
+        .map_err(|_| anyhow::anyhow!("invalid hex public key in DB for origin {}", events_payload.origin_id))?;
+    let bytes: [u8; 32] = public_key_bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("public key wrong length in DB for origin {}", events_payload.origin_id))?;
+    let verifying_key = VerifyingKey::from_bytes(&bytes)
+        .map_err(|e| anyhow::anyhow!("invalid public key in DB for origin {}: {e}", events_payload.origin_id))?;
 
     match signer.verify_events(&events_payload.clone(), &verifying_key, MAX_CLOCK_SKEW_SECS) {
         Ok(_) => (),
         Err(_) => return Err(StatsError::InvalidSignature),
     };
 
-    for event in events_payload.events.clone() {
+    for event in &events_payload.events {
         sqlx::query(
             r#"
             INSERT INTO keyevent (origin_id, origin_event_id, timestamp_ms, key_type, duration_ms)
             VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT DO NOTHING
             "#,
         )
         .bind(events_payload.origin_id)
@@ -106,11 +104,6 @@ pub async fn events(
         .execute(&mut *tx)
         .await
         .map_err(|e| {
-            if let Some(db_error) = e.as_database_error()
-                && db_error.is_unique_violation()
-            {
-                return StatsError::None;
-            }
             error!(error = %e, id = %events_payload.origin_id, "insert keyevent");
             StatsError::Db(e)
         })?;

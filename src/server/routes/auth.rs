@@ -36,18 +36,17 @@ impl axum::response::IntoResponse for RegisterError {
 }
 
 pub async fn register(
-    State(mut signer): State<crate::shared::signer::Signer>,
+    State(signer): State<crate::shared::signer::Signer>,
     State(pool): State<PgPool>,
     Json(register_request): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, RegisterError> {
-    let public_key_bytes =
-        hex::decode(register_request.clone().public_key).expect("invalid hex public key");
-    let verifying_key = VerifyingKey::from_bytes(
-        public_key_bytes[0..32]
-            .try_into()
-            .expect("invalid public key"),
-    )
-    .expect("invalid public key");
+    let public_key_bytes = hex::decode(&register_request.public_key)
+        .map_err(|_| RegisterError::_InvalidPublicKey)?;
+    let bytes: [u8; 32] = public_key_bytes
+        .try_into()
+        .map_err(|_| RegisterError::_InvalidPublicKey)?;
+    let verifying_key =
+        VerifyingKey::from_bytes(&bytes).map_err(|_| RegisterError::_InvalidPublicKey)?;
 
     match signer.verify_register(
         &register_request.clone(),
@@ -57,15 +56,6 @@ pub async fn register(
         Ok(_) => (),
         Err(_) => return Err(RegisterError::InvalidSignature),
     };
-
-    let signed_register_request = match signer.sign_register(register_request.clone()) {
-        Ok(signed_register_request) => signed_register_request,
-        Err(_) => return Err(RegisterError::InvalidSignature),
-    };
-
-    if signed_register_request.signature != register_request.signature {
-        return Err(RegisterError::InvalidSignature);
-    }
 
     // 2. Vérifier l'invitation dans une transaction
     let mut tx = pool.begin().await?;
