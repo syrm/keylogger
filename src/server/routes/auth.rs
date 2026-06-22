@@ -9,12 +9,8 @@ use thiserror::Error;
 pub enum RegisterError {
     #[error("invalid or expired invitation code")]
     InvalidCode,
-    #[error("invitation already used")]
-    _AlreadyUsed,
     #[error("invalid public key format")]
-    _InvalidPublicKey,
-    #[error("expired timestamp")]
-    ExpiredTimestamp,
+    InvalidPublicKey,
     #[error("invalid signature")]
     InvalidSignature,
     #[error(transparent)]
@@ -24,11 +20,9 @@ pub enum RegisterError {
 impl axum::response::IntoResponse for RegisterError {
     fn into_response(self) -> axum::response::Response {
         let status = match self {
-            Self::InvalidCode
-            | Self::_AlreadyUsed
-            | Self::_InvalidPublicKey
-            | Self::InvalidSignature
-            | Self::ExpiredTimestamp => StatusCode::BAD_REQUEST,
+            Self::InvalidCode | Self::InvalidPublicKey | Self::InvalidSignature => {
+                StatusCode::BAD_REQUEST
+            }
             Self::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, self.to_string()).into_response()
@@ -41,15 +35,15 @@ pub async fn register(
     Json(register_request): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, RegisterError> {
     let public_key_bytes = hex::decode(&register_request.public_key)
-        .map_err(|_| RegisterError::_InvalidPublicKey)?;
+        .map_err(|_| RegisterError::InvalidPublicKey)?;
     let bytes: [u8; 32] = public_key_bytes
         .try_into()
-        .map_err(|_| RegisterError::_InvalidPublicKey)?;
+        .map_err(|_| RegisterError::InvalidPublicKey)?;
     let verifying_key =
-        VerifyingKey::from_bytes(&bytes).map_err(|_| RegisterError::_InvalidPublicKey)?;
+        VerifyingKey::from_bytes(&bytes).map_err(|_| RegisterError::InvalidPublicKey)?;
 
     match signer.verify_register(
-        &register_request.clone(),
+        &register_request,
         &verifying_key,
         MAX_CLOCK_SKEW_SECS,
     ) {

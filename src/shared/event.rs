@@ -39,14 +39,6 @@ pub(crate) struct KeyEventsPayload {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct KeyEventWire {
-    pub id_delta: i64,
-    pub ts_delta: i64,
-    pub duration_ms: i32,
-    pub key_type: KeyType,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct KeyEventsPayloadWire {
     pub origin_id: i32,
     pub issued_at: u64,

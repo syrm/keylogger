@@ -1,9 +1,7 @@
-use crate::shared::event::{KeyEvent, KeyEventWire, KeyEventsPayload, KeyEventsPayloadWire};
+use crate::shared::event::{KeyEvent, KeyEventsPayload};
 use crate::shared::signer::Signer;
 use crate::shared::wirer::encode;
-use flate2::{write::GzEncoder, Compression};
 use futures_util::TryStreamExt;
-use std::io::Write;
 use std::time::Duration;
 use tokio::time::{self, MissedTickBehavior};
 use tracing::{error, info};
@@ -15,7 +13,7 @@ pub(crate) struct Sync {
 }
 
 impl Sync {
-    pub fn new(pool: sqlx::SqlitePool, signer: Signer) -> Self {
+    pub(crate) fn new(pool: sqlx::SqlitePool, signer: Signer) -> Self {
         Self {
             pool,
             signer,
@@ -23,7 +21,7 @@ impl Sync {
         }
     }
 
-    pub async fn sync(&mut self) -> anyhow::Result<()> {
+    pub(crate) async fn sync(&mut self) -> anyhow::Result<()> {
         self.origin_id = sqlx::query_scalar(
             r#"
             SELECT value
@@ -33,7 +31,7 @@ impl Sync {
         )
         .fetch_one(&self.pool)
         .await
-        .or_else(|_| return Err(anyhow::anyhow!("you should register first")))?;
+        .map_err(|_| anyhow::anyhow!("you should register first"))?;
 
         let mut interval = time::interval(Duration::from_secs(300));
         // Si un tick est manqué (tâche trop lente), on retarde le suivant
@@ -85,18 +83,18 @@ impl Sync {
             }
         }
 
-        if events.len() > 0 {
-            if let Ok(last_event_id) = self.send_event(events).await {
-                sqlx::query(
-                    r#"
-                        UPDATE metadata SET value = $1
-                        WHERE key = 'last_event_id_synced' AND value < $1
-                        "#,
-                )
-                .bind(last_event_id)
-                .execute(&pool)
-                .await?;
-            }
+        if !events.is_empty()
+            && let Ok(last_event_id) = self.send_event(events).await
+        {
+            sqlx::query(
+                r#"
+                    UPDATE metadata SET value = $1
+                    WHERE key = 'last_event_id_synced' AND value < $1
+                    "#,
+            )
+            .bind(last_event_id)
+            .execute(&pool)
+            .await?;
         }
 
         Ok(())
@@ -116,10 +114,8 @@ impl Sync {
 
         key_events_payload = self.signer.sign_events(key_events_payload)?;
 
-        let server_url = "http://localhost:4444";
-
         reqwest::Client::new()
-            .post(format!("{server_url}/key_events"))
+            .post(format!("{}/key_events", crate::client::SERVER_URL))
             .body(encode(&key_events_payload)?)
             .send()
             .await?

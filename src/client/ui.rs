@@ -18,9 +18,7 @@ pub(crate) fn run_ui(
     let token_refresh = cancellation_token.clone();
     tokio::spawn(async move {
         tokio::select! {
-            _ = token_refresh.cancelled() => {
-                return;
-            },
+            _ = token_refresh.cancelled() => {},
             _ = refresh_ui(pool, window_weak_for_refresh.clone()) => {}
         }
     });
@@ -43,12 +41,9 @@ pub(crate) fn run_ui(
                 },
                 result = rx.recv() => {
                     if let Some(show) = result {
-                        println!("receive show: {}", show);
-
                         let window_weak_for_hide = window_weak_for_hide.clone();
                         let window_clone = window_weak_for_hide.clone();
                         let res = slint::invoke_from_event_loop(move || {
-                            println!("receive show 2: {}", show);
 
                             if let Some(window) = window_clone.upgrade() {
                                 if show {
@@ -69,7 +64,7 @@ pub(crate) fn run_ui(
     });
 
     tracing::info!("starting ui");
-    slint::run_event_loop_until_quit().expect("TODO: panic ui");
+    slint::run_event_loop_until_quit().expect("slint event loop failed");
     main_window.hide()
 }
 
@@ -120,7 +115,7 @@ async fn refresh_ui(pool: SqlitePool, window_weak: Weak<MainWindow>) {
                         .into(),
                 );
             })
-            .expect("TODO: panic upgrade event loop");
+            .expect("UI event loop exited before upgrade");
 
         interval.tick().await;
     }

@@ -18,7 +18,7 @@ pub(crate) struct Signer {
 }
 
 impl Signer {
-    pub fn new(path_key: &Path) -> Self {
+    pub(crate) fn new(path_key: &Path) -> Self {
         Self {
             signing_key: None,
             path_key: PathBuf::from(path_key),
@@ -48,7 +48,7 @@ impl Signer {
         Ok(SigningKey::from_bytes(&bytes))
     }
 
-    pub fn get_public_key(&mut self) -> anyhow::Result<String> {
+    pub(crate) fn get_public_key(&mut self) -> anyhow::Result<String> {
         if self.signing_key.is_none() {
             let signing_key = match self.load_signing_key() {
                 Ok(signing_key) => signing_key,
@@ -83,12 +83,12 @@ impl Signer {
         }
     }
 
-    pub fn sign_register(&mut self, register: RegisterRequest) -> anyhow::Result<RegisterRequest> {
+    pub(crate) fn sign_register(&mut self, register: RegisterRequest) -> anyhow::Result<RegisterRequest> {
         let public_key_b64 = self.get_public_key()?;
         let timestamp = self.get_timestamp();
 
         let to_sign = SignedRegisterRequest {
-            action: ACTION_REGISTER.parse()?,
+            action: ACTION_REGISTER.to_owned(),
             code: register.code.clone(),
             name: register.name.clone(),
             public_key: public_key_b64.clone(),
@@ -108,14 +108,14 @@ impl Signer {
         anyhow::Ok(new_register_request)
     }
 
-    pub fn sign_events(
+    pub(crate) fn sign_events(
         &mut self,
         events_payload: KeyEventsPayload,
     ) -> anyhow::Result<KeyEventsPayload> {
         let timestamp = self.get_timestamp();
 
         let to_sign = SignedKeyEventsPayload {
-            action: ACTION_EVENTS.parse()?,
+            action: ACTION_EVENTS.to_owned(),
             events: events_payload.events.clone(),
             origin_id: events_payload.origin_id,
             issued_at: timestamp,
@@ -133,7 +133,7 @@ impl Signer {
         anyhow::Ok(new_events_payload)
     }
 
-    pub fn verify(
+    pub(crate) fn verify(
         &self,
         message: &[u8],
         signature_b64: &str,
@@ -156,7 +156,7 @@ impl Signer {
         Ok(())
     }
 
-    pub fn verify_register(
+    pub(crate) fn verify_register(
         &self,
         register: &RegisterRequest,
         verifying_key: &VerifyingKey,
@@ -171,7 +171,7 @@ impl Signer {
         }
 
         let to_verify = SignedRegisterRequest {
-            action: ACTION_REGISTER.parse()?,
+            action: ACTION_REGISTER.to_owned(),
             code: register.code.clone(),
             name: register.name.clone(),
             public_key: register.public_key.clone(),
@@ -183,7 +183,7 @@ impl Signer {
         self.verify(&message, &register.signature, verifying_key)
     }
 
-    pub fn verify_events(
+    pub(crate) fn verify_events(
         &self,
         events_payload: &KeyEventsPayload,
         verifying_key: &VerifyingKey,
@@ -198,7 +198,7 @@ impl Signer {
         }
 
         let to_verify = SignedKeyEventsPayload {
-            action: ACTION_EVENTS.parse()?,
+            action: ACTION_EVENTS.to_owned(),
             events: events_payload.events.clone(),
             origin_id: events_payload.origin_id,
             issued_at: events_payload.issued_at,

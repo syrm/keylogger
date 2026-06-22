@@ -7,7 +7,7 @@ use sqlx::{migrate, PgPool};
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::decompression::RequestDecompressionLayer;
 use tower_http::trace::TraceLayer;
-use tracing::{error, info};
+use tracing::error;
 
 #[derive(Clone, FromRef)]
 struct AppState {

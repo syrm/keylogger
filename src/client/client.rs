@@ -7,7 +7,7 @@ use crate::shared::request::{RegisterRequest, RegisterResponse};
 use crate::shared::signer::Signer;
 use ksni::TrayMethods;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-use sqlx::{migrate, PgPool, SqlitePool};
+use sqlx::{migrate, SqlitePool};
 use std::str::FromStr;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -18,7 +18,7 @@ pub(crate) struct Client {
 }
 
 impl Client {
-    pub fn new(signer: Signer) -> Self {
+    pub(crate) fn new(signer: Signer) -> Self {
         Self { signer }
     }
 
@@ -40,19 +40,14 @@ impl Client {
             std::process::exit(1);
         }
 
-        let arg_type = std::env::args()
-            .nth(2)
-            .or(Some("".parse().unwrap()))
-            .unwrap();
-
-        info!("bouh {}", arg_type);
+        let arg_type = std::env::args().nth(2).unwrap_or_default();
 
         if arg_type == "register" {
             let arg_name = std::env::args().nth(3).expect("name parameter is required");
             let arg_code = std::env::args().nth(4).expect("code parameter is required");
 
             let result = self.register(pool.clone(), &arg_name, &arg_code).await;
-            info!("result {:?}", result);
+            info!("register result: {:?}", result);
             return;
         }
 
@@ -65,9 +60,7 @@ impl Client {
         let token_collector = token.clone();
         let h_collector = tokio::spawn(async move {
             tokio::select! {
-                _ = token_collector.cancelled() => {
-                    return;
-                },
+                _ = token_collector.cancelled() => {},
                 resp = collector.collect(rx_key) => {
                     if let Err(e) = resp {
                         error!(error = %e, "can't collect stats");
@@ -122,9 +115,7 @@ impl Client {
 
             rt.block_on(async move {
                 tokio::select! {
-                    _ = token_monitor.cancelled() => {
-                        return;
-                    },
+                    _ = token_monitor.cancelled() => {},
                     resp = kc.monitor(tx_key) => {
                         if let Err(e) = resp {
                             error!(error = %e, "can't count");
@@ -160,8 +151,6 @@ impl Client {
     }
 
     async fn register(&mut self, pool: SqlitePool, name: &str, code: &str) -> anyhow::Result<bool> {
-        info!("registerrrrrrrrrrrrrrrrrr lets go");
-
         let mut register_request = RegisterRequest {
             code: code.to_string(),
             name: name.to_string(),
@@ -172,9 +161,8 @@ impl Client {
 
         register_request = self.signer.sign_register(register_request)?;
 
-        let server_url = "http://localhost:4444";
         let response = reqwest::Client::new()
-            .post(format!("{server_url}/auth/register"))
+            .post(format!("{}/auth/register", crate::client::SERVER_URL))
             .json(&register_request)
             .send()
             .await?

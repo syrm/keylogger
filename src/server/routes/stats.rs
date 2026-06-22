@@ -1,10 +1,9 @@
 use crate::server::event::KeyType;
-use crate::shared::event::KeyEventsPayload;
 use crate::shared::signer::Signer;
 use crate::shared::wirer::decode;
 use crate::MAX_CLOCK_SKEW_SECS;
 use axum::body::Bytes;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{extract::State, http::StatusCode};
 use ed25519_dalek::VerifyingKey;
 use sqlx::PgPool;
 use thiserror::Error;
@@ -14,12 +13,8 @@ use tracing::{error, info};
 pub enum StatsError {
     #[error("invalid origin id")]
     InvalidOriginID,
-    #[error("invalid public key format")]
-    _InvalidPublicKey,
     #[error("invalid signature")]
     InvalidSignature,
-    #[error("error signature")]
-    ErrorSignature,
     #[error("invalid payload")]
     InvalidPayload(#[from] anyhow::Error),
     #[error(transparent)]
@@ -29,10 +24,7 @@ pub enum StatsError {
 impl axum::response::IntoResponse for StatsError {
     fn into_response(self) -> axum::response::Response {
         let status = match &self {
-            Self::_InvalidPublicKey
-            | Self::InvalidOriginID
-            | Self::InvalidSignature
-            | Self::ErrorSignature => {
+            Self::InvalidOriginID | Self::InvalidSignature => {
                 error!(error = %self, "error");
                 StatusCode::BAD_REQUEST
             }
@@ -56,7 +48,7 @@ pub async fn events(
 ) -> Result<(), StatsError> {
     let mut tx = pool.begin().await?;
 
-    let events_payload = decode(&body).map_err(|e| StatsError::InvalidPayload(e))?;
+    let events_payload = decode(&body).map_err(StatsError::InvalidPayload)?;
     info!("keyEvents received: {}", events_payload.events.len());
 
     let public_key: String = sqlx::query_scalar(
@@ -83,7 +75,7 @@ pub async fn events(
     let verifying_key = VerifyingKey::from_bytes(&bytes)
         .map_err(|e| anyhow::anyhow!("invalid public key in DB for origin {}: {e}", events_payload.origin_id))?;
 
-    match signer.verify_events(&events_payload.clone(), &verifying_key, MAX_CLOCK_SKEW_SECS) {
+    match signer.verify_events(&events_payload, &verifying_key, MAX_CLOCK_SKEW_SECS) {
         Ok(_) => (),
         Err(_) => return Err(StatsError::InvalidSignature),
     };

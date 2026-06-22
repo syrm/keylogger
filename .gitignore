@@ -2,3 +2,4 @@
 keylogger.db
 keylogger-dev.db
 keylogger-dev.db*
+rustc-ice-*

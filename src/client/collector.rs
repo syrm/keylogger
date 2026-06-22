@@ -7,11 +7,11 @@ pub(crate) struct Collector {
 }
 
 impl Collector {
-    pub fn new(pool: sqlx::SqlitePool) -> Self {
+    pub(crate) fn new(pool: sqlx::SqlitePool) -> Self {
         Self { pool }
     }
 
-    pub async fn collect(&self, mut receiver: Receiver<KeyEvent>) -> anyhow::Result<()> {
+    pub(crate) async fn collect(&self, mut receiver: Receiver<KeyEvent>) -> anyhow::Result<()> {
         let mut keys: Vec<KeyEvent> = Vec::new();
 
         let mut interval = time::interval(std::time::Duration::from_secs(10));

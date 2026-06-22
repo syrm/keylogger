@@ -19,10 +19,3 @@ impl From<ClientKeyType> for KeyType {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct EventServer {
-    pub id: i64,
-    pub timestamp_ms: i64,
-    pub key_type: KeyType,
-    pub duration_ms: i32,
-}

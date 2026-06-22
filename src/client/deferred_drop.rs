@@ -8,12 +8,6 @@ impl<T: Send + 'static> DeferredDrop<T> {
     pub(crate) fn new(value: T) -> Self {
         Self(Some(value))
     }
-
-    /// Takes the inner value out, bypassing the deferred drop (use this when
-    /// you need to move the value onward, e.g. into another owning type).
-    fn into_inner(mut self) -> T {
-        self.0.take().expect("value already taken")
-    }
 }
 
 impl<T: Send + 'static> std::ops::Deref for DeferredDrop<T> {

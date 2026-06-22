@@ -43,7 +43,7 @@ impl KeyCounter {
         }
     }
 
-    pub async fn monitor(&self, sender: Sender<KeyEvent>) -> anyhow::Result<()> {
+    pub(crate) async fn monitor(&self, sender: Sender<KeyEvent>) -> anyhow::Result<()> {
         // Synchronous initial computation so we have a valid offset before
         // any device starts reporting events.
         let initial_offset = realtime_boottime_offset_ms()?;
