@@ -41,10 +41,10 @@ impl Sync {
         loop {
             interval.tick().await;
             info!("tick");
-            if let Err(e) = self.send_events().await {
-                error!(error = %e, "can't send events");
+            match self.send_events().await {
+                Ok(()) => info!("events sent"),
+                Err(e) => error!(error = %e, "can't send events"),
             }
-            info!("events sent");
         }
     }
 
@@ -67,30 +67,28 @@ impl Sync {
             events.push(event);
 
             if events.len() > 50000 {
-                if let Ok(last_event_id) = self.send_event(events.clone()).await {
-                    sqlx::query(
-                        r#"
-                        UPDATE metadata SET value = $1
-                        WHERE key = 'last_event_id_synced' AND value < $1
-                        "#,
-                    )
-                    .bind(last_event_id)
-                    .execute(&pool)
-                    .await?;
-                }
+                let last_event_id = self.send_event(events.clone()).await?;
+                sqlx::query(
+                    r#"
+                    UPDATE metadata SET value = $1
+                    WHERE key = 'last_event_id_synced' AND value < $1
+                    "#,
+                )
+                .bind(last_event_id)
+                .execute(&pool)
+                .await?;
 
                 events.clear();
             }
         }
 
-        if !events.is_empty()
-            && let Ok(last_event_id) = self.send_event(events).await
-        {
+        if !events.is_empty() {
+            let last_event_id = self.send_event(events).await?;
             sqlx::query(
                 r#"
-                    UPDATE metadata SET value = $1
-                    WHERE key = 'last_event_id_synced' AND value < $1
-                    "#,
+                UPDATE metadata SET value = $1
+                WHERE key = 'last_event_id_synced' AND value < $1
+                "#,
             )
             .bind(last_event_id)
             .execute(&pool)
