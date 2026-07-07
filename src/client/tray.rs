@@ -9,10 +9,7 @@ pub(crate) struct MyTray {
 
 impl MyTray {
     pub(crate) fn new(tx: Sender<bool>) -> Self {
-        Self {
-            tx: tx,
-            show: false,
-        }
+        Self { tx, show: false }
     }
 }
 
@@ -33,13 +30,12 @@ impl Tray for MyTray {
         vec![ksni::MenuItem::Standard(ksni::menu::StandardItem {
             label: "Show/Hide".to_string(),
             activate: Box::new(|tray: &mut MyTray| {
-                println!("activate");
                 let tx = tray.tx.clone();
                 tray.show = !tray.show;
-                let show = tray.show.clone();
+                let show = tray.show;
                 println!("show: {}", show);
                 tokio::spawn(async move {
-                    tx.send(show).await;
+                    tx.send(show).await.expect("TODO: ui menu");
                 });
             }),
             ..Default::default()

@@ -1,16 +1,14 @@
-use slint::{PlatformError, Weak, Window};
-use sqlx::{pool, SqlitePool};
-use std::time::{SystemTime, UNIX_EPOCH};
+use slint::{PlatformError, Weak};
+use sqlx::SqlitePool;
 use tokio::sync::mpsc::Receiver;
 use tokio::time;
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 slint::include_modules!();
 
 pub(crate) fn run_ui(
     mut rx: Receiver<bool>,
-    pool: sqlx::SqlitePool,
+    pool: SqlitePool,
     cancellation_token: CancellationToken,
 ) -> Result<(), PlatformError> {
     let main_window = MainWindow::new()?;
@@ -20,11 +18,18 @@ pub(crate) fn run_ui(
     let token_refresh = cancellation_token.clone();
     tokio::spawn(async move {
         tokio::select! {
-            _ = token_refresh.cancelled() => {
-                return;
-            },
+            _ = token_refresh.cancelled() => {},
             _ = refresh_ui(pool, window_weak_for_refresh.clone()) => {}
         }
+    });
+
+    let token_quit = cancellation_token.clone();
+    tokio::spawn(async move {
+        token_quit.cancelled().await;
+        slint::invoke_from_event_loop(|| {
+            let _ = slint::quit_event_loop();
+        })
+        .ok();
     });
 
     let token_show = cancellation_token.clone();
@@ -36,12 +41,9 @@ pub(crate) fn run_ui(
                 },
                 result = rx.recv() => {
                     if let Some(show) = result {
-                        println!("receive show: {}", show);
-
                         let window_weak_for_hide = window_weak_for_hide.clone();
                         let window_clone = window_weak_for_hide.clone();
                         let res = slint::invoke_from_event_loop(move || {
-                            println!("receive show 2: {}", show);
 
                             if let Some(window) = window_clone.upgrade() {
                                 if show {
@@ -62,12 +64,12 @@ pub(crate) fn run_ui(
     });
 
     tracing::info!("starting ui");
-    slint::run_event_loop_until_quit();
+    slint::run_event_loop_until_quit().expect("slint event loop failed");
     main_window.hide()
 }
 
-async fn refresh_ui(pool: sqlx::SqlitePool, window_weak: Weak<MainWindow>) {
-    let mut interval = time::interval(std::time::Duration::from_secs(10));
+async fn refresh_ui(pool: SqlitePool, window_weak: Weak<MainWindow>) {
+    let mut interval = time::interval(time::Duration::from_secs(10));
 
     loop {
         let count_1m = get_key_count(&pool, 60).await;
@@ -82,45 +84,48 @@ async fn refresh_ui(pool: sqlx::SqlitePool, window_weak: Weak<MainWindow>) {
 
         tracing::info!("key count: {} / {} / {}", count_1m, count_5m, count_15m);
 
-        window_weak.upgrade_in_event_loop(move |window| {
-            if !window.window().is_visible() {
-                return;
-            }
+        window_weak
+            .upgrade_in_event_loop(move |window| {
+                if !window.window().is_visible() {
+                    return;
+                }
 
-            window.set_key_count_1m(count_1m);
-            window.set_key_count_5m(count_5m);
-            window.set_key_count_15m(count_15m);
-            window.set_wpm_1m(avg_1m);
-            window.set_wpm_5m(avg_5m);
-            window.set_wpm_15m(avg_15m);
+                window.set_key_count_1m(count_1m);
+                window.set_key_count_5m(count_5m);
+                window.set_key_count_15m(count_15m);
+                window.set_wpm_1m(avg_1m);
+                window.set_wpm_5m(avg_5m);
+                window.set_wpm_15m(avg_15m);
 
-            let is_compact = window.get_is_compact();
-            let (w, h) = if is_compact {
-                (150.0, 20.0)
-            } else {
-                (400.0, 80.0)
-            };
+                let is_compact = window.get_is_compact();
+                if is_compact {
+                    (150.0, 20.0)
+                } else {
+                    (400.0, 80.0)
+                };
 
-            window.set_chart_path_1m(
-                generate_path(data_1m, window.get_chart_w_1m(), window.get_chart_h_1m()).into(),
-            );
-            window.set_chart_path_5m(
-                generate_path(data_5m, window.get_chart_w_5m(), window.get_chart_h_5m()).into(),
-            );
-            window.set_chart_path_15m(
-                generate_path(data_15m, window.get_chart_w_15m(), window.get_chart_h_15m()).into(),
-            );
-        });
+                window.set_chart_path_1m(
+                    generate_path(data_1m, window.get_chart_w_1m(), window.get_chart_h_1m()).into(),
+                );
+                window.set_chart_path_5m(
+                    generate_path(data_5m, window.get_chart_w_5m(), window.get_chart_h_5m()).into(),
+                );
+                window.set_chart_path_15m(
+                    generate_path(data_15m, window.get_chart_w_15m(), window.get_chart_h_15m())
+                        .into(),
+                );
+            })
+            .expect("UI event loop exited before upgrade");
 
         interval.tick().await;
     }
 }
 
-async fn get_key_count(pool: &sqlx::SqlitePool, duration: u16) -> i32 {
+async fn get_key_count(pool: &SqlitePool, duration: u16) -> i32 {
     let result = sqlx::query_as::<_, (i64,)>(
         r#"
     SELECT COUNT(*) as count
-        FROM keycount WHERE ts_ms > (strftime('%s', 'now') - ?)*1000
+        FROM keyevent WHERE ts_ms > (strftime('%s', 'now') - ?)*1000
     "#,
     )
     .bind(duration)
@@ -136,14 +141,14 @@ async fn get_key_count(pool: &sqlx::SqlitePool, duration: u16) -> i32 {
     }
 }
 
-async fn get_wpm(pool: &sqlx::SqlitePool, duration: u16) -> i32 {
+async fn get_wpm(pool: &SqlitePool, duration: u16) -> i32 {
     let result = sqlx::query_as::<_, (f64,)>(r#"
         WITH gaps AS (
             SELECT
             ts_ms,
             CASE WHEN ts_ms - LAG(ts_ms) OVER (ORDER BY ts_ms) > 5000 THEN 1 ELSE 0 END as new_session,
             key_type
-            FROM keycount
+            FROM keyevent
             WHERE ts_ms BETWEEN (strftime('%s', 'now') - ?)*1000 AND (strftime('%s', 'now') - 0)*1000
         ),
         sessions AS (
@@ -182,11 +187,11 @@ async fn get_wpm(pool: &sqlx::SqlitePool, duration: u16) -> i32 {
     }
 }
 
-async fn get_keycount_details(pool: &sqlx::SqlitePool, duration: u16, group: u16) -> Vec<i32> {
+async fn get_keycount_details(pool: &SqlitePool, duration: u16, group: u16) -> Vec<i32> {
     let result = sqlx::query_as::<_, (i32,)>(
         r#"
         SELECT COUNT(*) as count
-        FROM keycount WHERE ts_ms > (strftime('%s', 'now') - ?)*1000
+        FROM keyevent WHERE ts_ms > (strftime('%s', 'now') - ?)*1000
         GROUP BY ts_ms / (?*1000);
     "#,
     )
@@ -196,7 +201,7 @@ async fn get_keycount_details(pool: &sqlx::SqlitePool, duration: u16, group: u16
     .await;
 
     match result {
-        Ok(rows) => rows.iter().map(|row| row.0 as i32).collect(),
+        Ok(rows) => rows.iter().map(|row| row.0).collect(),
         Err(e) => {
             tracing::error!(error = %e, "can't do query key count details");
             vec![]
