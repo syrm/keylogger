@@ -3153,7 +3153,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "keylogger"
+name = "keycounter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
